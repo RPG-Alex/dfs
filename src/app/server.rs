@@ -2,10 +2,17 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use thiserror::Error;
-use tokio::{select, sync::Mutex, task::{JoinError, JoinHandle, JoinSet}};
+use tokio::{
+    select,
+    sync::Mutex,
+    task::{JoinError, JoinHandle, JoinSet},
+};
 use tokio_util::sync::CancellationToken;
 
-use super::{config::P2pServiceConfig, service::{P2pNetworkError, P2pService}};
+use super::{
+    config::P2pServiceConfig,
+    service::{P2pNetworkError, P2pService},
+};
 
 #[derive(Debug, Error)]
 pub enum ServerError {
@@ -29,15 +36,18 @@ pub trait Service: Send + Sync + 'static {
 
 impl Server {
     pub fn new() -> Self {
-        Self {cancel_token: CancellationToken::new(), subtasks: Arc::new(Mutex::new(vec![])) }
+        Self {
+            cancel_token: CancellationToken::new(),
+            subtasks: Arc::new(Mutex::new(vec![])),
+        }
     }
 
     pub async fn start(&self) -> ServerResult<()> {
         // p2p service
         let p2p_service = P2pService::new(
             P2pServiceConfig::builder()
-            .with_keypair_file("./keys.keypair")
-            .build()
+                .with_keypair_file("./keys.keypair")
+                .build(),
         );
         self.spawn_task(p2p_service).await?;
 
@@ -47,11 +57,9 @@ impl Server {
     async fn spawn_task<S: Service>(&self, service: S) -> ServerResult<()> {
         let mut handles = self.subtasks.lock().await;
         let cancel_token = self.cancel_token.clone();
-        handles.push(
-            tokio::spawn(async move {
-                service.start(cancel_token).await
-            })
-    );
+        handles.push(tokio::spawn(
+            async move { service.start(cancel_token).await },
+        ));
 
         Ok(())
     }
