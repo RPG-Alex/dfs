@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use log::info;
 use thiserror::Error;
 use tokio::{
     select,
@@ -66,7 +67,7 @@ impl Server {
 
     /// Stops the server.
     pub async fn stop(&self) -> ServerResult<()> {
-        println!("Shutting down...");
+        info!("Shutting down...");
         self.cancel_token.cancel();
         let mut handles = self.subtasks.lock().await;
         for handle in handles.iter_mut() {

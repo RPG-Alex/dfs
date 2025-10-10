@@ -7,13 +7,7 @@ use std::{
 
 use async_trait::async_trait;
 use libp2p::{
-    StreamProtocol, Swarm, TransportError, dcutr, gossipsub, identify,
-    identity::{DecodingError, Keypair},
-    kad::{self, store::MemoryStore},
-    mdns, multiaddr, noise, ping, relay,
-    request_response::{self, cbor},
-    swarm::NetworkBehaviour,
-    tcp, yamux,
+    dcutr, futures::{select, StreamExt}, gossipsub::{self, IdentTopic, SubscriptionError}, identify, identity::{DecodingError, Keypair}, kad::{self, store::MemoryStore}, mdns, multiaddr, noise, ping, relay, request_response::{self, cbor}, swarm::NetworkBehaviour, tcp, yamux, StreamProtocol, Swarm, TransportError
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -50,6 +44,8 @@ pub enum P2pNetworkError {
     Libp2pMultiAddrParse(#[from] multiaddr::Error),
     #[error("libp2p transport error:{0}")]
     Libp2pTransport(#[from] TransportError<io::Error>),
+    #[error("libp2p gossipsub subscription error:{0}")]
+    Libp2GossipsubSubscription(#[from] SubscriptionError),
 }
 
 #[derive(NetworkBehaviour)]
@@ -190,9 +186,36 @@ impl Service for P2pService {
                 ServerError::P2pNetwork(P2pNetworkError::Libp2pMultiAddrParse(error))
             })?)
             .map_err(|error| ServerError::P2pNetwork(P2pNetworkError::Libp2pTransport(error)))?;
-        swarm.behaviour_mut().kademlia.set_mode(Some(Mode::Server));
 
-        // p2p service at time: 8:35 mins 
+        let file_owners_topic = IdentTopic::new("available files");
+        swarm.behaviour_mut().kademlia.set_mode(Some(Mode::Server));
+        swarm.behaviour_mut().gossipsub.subscribe(&file_owners_topic).map_err(|error| ServerError::P2pNetwork(P2pNetworkError::Libp2GossipsubSubscription(error)))?;
+
+        // TODO: add boostrap peers
+        loop {
+            select!{
+                event = swarm.select_next_some() => match event {
+                    // libp2p::swarm::SwarmEvent::Behaviour(_) => todo!(),
+                    // libp2p::swarm::SwarmEvent::ConnectionEstablished { peer_id, connection_id, endpoint, num_established, concurrent_dial_errors, established_in } => todo!(),
+                    // libp2p::swarm::SwarmEvent::ConnectionClosed { peer_id, connection_id, endpoint, num_established, cause } => todo!(),
+                    // libp2p::swarm::SwarmEvent::IncomingConnection { connection_id, local_addr, send_back_addr } => todo!(),
+                    // libp2p::swarm::SwarmEvent::IncomingConnectionError { connection_id, local_addr, send_back_addr, error, peer_id } => todo!(),
+                    // libp2p::swarm::SwarmEvent::OutgoingConnectionError { connection_id, peer_id, error } => todo!(),
+                    // libp2p::swarm::SwarmEvent::NewListenAddr { listener_id, address } => todo!(),
+                    // libp2p::swarm::SwarmEvent::ExpiredListenAddr { listener_id, address } => todo!(),
+                    // libp2p::swarm::SwarmEvent::ListenerClosed { listener_id, addresses, reason } => todo!(),
+                    // libp2p::swarm::SwarmEvent::ListenerError { listener_id, error } => todo!(),
+                    // libp2p::swarm::SwarmEvent::Dialing { peer_id, connection_id } => todo!(),
+                    // libp2p::swarm::SwarmEvent::NewExternalAddrCandidate { address } => todo!(),
+                    // libp2p::swarm::SwarmEvent::ExternalAddrConfirmed { address } => todo!(),
+                    // libp2p::swarm::SwarmEvent::ExternalAddrExpired { address } => todo!(),
+                    // libp2p::swarm::SwarmEvent::NewExternalAddrOfPeer { peer_id, address } => todo!(),
+                    _ => todo!(),
+                }
+            }
+        }
+
+
 
         Ok(())
     }

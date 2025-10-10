@@ -5,6 +5,7 @@ mod app;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::init();
     // termination handler
     let (term_tx, term_rx) = channel();
     ctrlc::set_handler(move || term_tx.send(()).expect("Can't send signal on channel"))?;

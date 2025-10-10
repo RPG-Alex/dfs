@@ -7,7 +7,9 @@ edition = "2024"
 anyhow = "1.0.100"
 async-trait = "0.1.89"
 ctrlc = { version = "3.5.0", features = ["termination"] }
+env_logger = "0.11.8"
 libp2p = { version = "0.56.0", features = ["full"] }
+log = "0.4.28"
 serde = { version = "1.0.228", features = ["default", "serde_derive"] }
 serde_default = "0.2.0"
 thiserror = "2.0.17"
