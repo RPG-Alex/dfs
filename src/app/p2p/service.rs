@@ -1,22 +1,33 @@
-use core::error;
 use std::{
     hash::{DefaultHasher, Hash, Hasher},
-    path::{Path, PathBuf},
+    path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
 use libp2p::{
-    dcutr, futures::{select, StreamExt}, gossipsub::{self, IdentTopic, SubscriptionError}, identify, identity::{DecodingError, Keypair}, kad::{self, store::MemoryStore}, mdns, multiaddr, noise, ping, relay, request_response::{self, cbor}, swarm::NetworkBehaviour, tcp, yamux, StreamProtocol, Swarm, TransportError
+    StreamProtocol, Swarm, TransportError, dcutr,
+    futures::StreamExt,
+    gossipsub::{self, IdentTopic, SubscriptionError},
+    identify,
+    identity::{DecodingError, Keypair},
+    kad::{self, store::MemoryStore},
+    mdns, multiaddr, noise, ping, relay,
+    request_response::{self, cbor},
+    swarm::NetworkBehaviour,
+    tcp, yamux,
 };
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io;
 use tokio_util::sync::CancellationToken;
 
-use crate::app::{service::kad::Mode, ServerError, Service};
+use crate::app::{ServerError, Service, service::kad::Mode};
 
 use super::config::P2pServiceConfig;
+
+const LOG_TARGET: &str = "app::p2p::P2pService";
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FileChunkRequest {
@@ -189,33 +200,34 @@ impl Service for P2pService {
 
         let file_owners_topic = IdentTopic::new("available files");
         swarm.behaviour_mut().kademlia.set_mode(Some(Mode::Server));
-        swarm.behaviour_mut().gossipsub.subscribe(&file_owners_topic).map_err(|error| ServerError::P2pNetwork(P2pNetworkError::Libp2GossipsubSubscription(error)))?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&file_owners_topic)
+            .map_err(|error| {
+                ServerError::P2pNetwork(P2pNetworkError::Libp2GossipsubSubscription(error))
+            })?;
 
         // TODO: add boostrap peers
         loop {
-            select!{
+            tokio::select! {
                 event = swarm.select_next_some() => match event {
-                    // libp2p::swarm::SwarmEvent::Behaviour(_) => todo!(),
-                    // libp2p::swarm::SwarmEvent::ConnectionEstablished { peer_id, connection_id, endpoint, num_established, concurrent_dial_errors, established_in } => todo!(),
-                    // libp2p::swarm::SwarmEvent::ConnectionClosed { peer_id, connection_id, endpoint, num_established, cause } => todo!(),
-                    // libp2p::swarm::SwarmEvent::IncomingConnection { connection_id, local_addr, send_back_addr } => todo!(),
-                    // libp2p::swarm::SwarmEvent::IncomingConnectionError { connection_id, local_addr, send_back_addr, error, peer_id } => todo!(),
-                    // libp2p::swarm::SwarmEvent::OutgoingConnectionError { connection_id, peer_id, error } => todo!(),
-                    // libp2p::swarm::SwarmEvent::NewListenAddr { listener_id, address } => todo!(),
-                    // libp2p::swarm::SwarmEvent::ExpiredListenAddr { listener_id, address } => todo!(),
-                    // libp2p::swarm::SwarmEvent::ListenerClosed { listener_id, addresses, reason } => todo!(),
-                    // libp2p::swarm::SwarmEvent::ListenerError { listener_id, error } => todo!(),
-                    // libp2p::swarm::SwarmEvent::Dialing { peer_id, connection_id } => todo!(),
-                    // libp2p::swarm::SwarmEvent::NewExternalAddrCandidate { address } => todo!(),
-                    // libp2p::swarm::SwarmEvent::ExternalAddrConfirmed { address } => todo!(),
-                    // libp2p::swarm::SwarmEvent::ExternalAddrExpired { address } => todo!(),
-                    // libp2p::swarm::SwarmEvent::NewExternalAddrOfPeer { peer_id, address } => todo!(),
-                    _ => todo!(),
+                    libp2p::swarm::SwarmEvent::Behaviour(_) => {
+
+                    },
+                    libp2p::swarm::SwarmEvent::NewListenAddr { listener_id, address } => {
+                        info!(target: LOG_TARGET, "LIstening on {}", address);
+                    },
+                    _ => {
+                        debug!(target: LOG_TARGET, "{:?}", event);
+                    },
+                },
+                _ = cancel_token.cancelled() => {
+                    info!(target: LOG_TARGET, "P2p networking service shutting down...");
+                    break;
                 }
             }
         }
-
-
 
         Ok(())
     }

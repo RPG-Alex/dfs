@@ -15,6 +15,8 @@ use super::{
     service::{P2pNetworkError, P2pService},
 };
 
+const LOG_TARGET: &str = "app::server";
+
 #[derive(Debug, Error)]
 pub enum ServerError {
     #[error("Task join error: {0}")]
@@ -67,7 +69,7 @@ impl Server {
 
     /// Stops the server.
     pub async fn stop(&self) -> ServerResult<()> {
-        info!("Shutting down...");
+        info!(target: LOG_TARGET, "Shutting down...");
         self.cancel_token.cancel();
         let mut handles = self.subtasks.lock().await;
         for handle in handles.iter_mut() {
