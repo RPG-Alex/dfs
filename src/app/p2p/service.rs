@@ -6,16 +6,7 @@ use std::{
 
 use async_trait::async_trait;
 use libp2p::{
-    StreamProtocol, Swarm, TransportError, dcutr,
-    futures::StreamExt,
-    gossipsub::{self, IdentTopic, SubscriptionError},
-    identify,
-    identity::{DecodingError, Keypair},
-    kad::{self, store::MemoryStore},
-    mdns, multiaddr, noise, ping, relay,
-    request_response::{self, cbor},
-    swarm::NetworkBehaviour,
-    tcp, yamux,
+    dcutr, futures::StreamExt, gossipsub::{self, IdentTopic, SubscriptionError}, identify, identity::{DecodingError, Keypair}, kad::{self, store::MemoryStore}, mdns, multiaddr::{self, Protocol}, noise, ping, relay, request_response::{self, cbor}, swarm::NetworkBehaviour, tcp, yamux, StreamProtocol, Swarm, TransportError
 };
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
@@ -212,10 +203,36 @@ impl Service for P2pService {
         loop {
             tokio::select! {
                 event = swarm.select_next_some() => match event {
-                    libp2p::swarm::SwarmEvent::Behaviour(_) => {
+                    libp2p::swarm::SwarmEvent::Behaviour(event) => match event {
+                        P2pNetworkBehaviourEvent::Identify(event) => match event {
+                            identify::Event::Received { connection_id: _connection_id, peer_id, info } => {
+                                let is_relay = info.protocols.iter().any(|protocol| *protocol == relay::HOP_PROTOCOL_NAME);
 
+                                for addr in info.listen_addrs {
+                                    swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+                                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+
+                                    if is_relay {
+                                        let listen_addr = addr.clone().with_p2p(peer_id).unwrap().with(Protocol::P2pCircuit);
+                                    }
+                                }
+                            },
+                            _ => {
+                                debug!(target: LOG_TARGET, "{:?}", event);  
+                            }
+                        },
+                        P2pNetworkBehaviourEvent::Mdns(_) => todo!(),
+                        P2pNetworkBehaviourEvent::Kademlia(_) => todo!(),
+                        P2pNetworkBehaviourEvent::Gossipsub(_) => todo!(),
+                        P2pNetworkBehaviourEvent::RelayServer(_) => todo!(),
+                        P2pNetworkBehaviourEvent::RelayClient(_) => todo!(),
+                        P2pNetworkBehaviourEvent::Dcutr(_) => todo!(),
+                        P2pNetworkBehaviourEvent::FileDownload(_) => todo!(),
+                        _ => {
+                            debug!(target: LOG_TARGET, "{:?}", event);
+                        }
                     },
-                    libp2p::swarm::SwarmEvent::NewListenAddr { listener_id, address } => {
+                    libp2p::swarm::SwarmEvent::NewListenAddr { listener_id: _listener_id, address } => {
                         info!(target: LOG_TARGET, "LIstening on {}", address);
                     },
                     _ => {
