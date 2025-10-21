@@ -1,12 +1,26 @@
 use std::{
-    fmt::Debug, hash::{DefaultHasher, Hash, Hasher}, path::PathBuf, time::{Duration, SystemTime, UNIX_EPOCH}
+    fmt::Debug,
+    hash::{DefaultHasher, Hash, Hasher},
+    path::PathBuf,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
 use libp2p::{
-    dcutr, futures::StreamExt, gossipsub::{self, IdentTopic, SubscriptionError}, identify::{self, Info}, identity::{DecodingError, Keypair}, kad::{self, store::MemoryStore}, mdns, multiaddr::{self, Protocol}, noise, ping, relay, request_response::{self, cbor}, swarm::NetworkBehaviour, tcp, yamux, PeerId, StreamProtocol, Swarm, TransportError
+    Multiaddr, PeerId, StreamProtocol, Swarm, TransportError, dcutr,
+    futures::StreamExt,
+    gossipsub::{self, IdentTopic, SubscriptionError},
+    identify::{self, Info},
+    identity::{DecodingError, Keypair},
+    kad::{self, store::MemoryStore},
+    mdns,
+    multiaddr::{self, Protocol},
+    noise, ping, relay,
+    request_response::{self, cbor},
+    swarm::NetworkBehaviour,
+    tcp, yamux,
 };
-use log::{debug, info};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io;
@@ -170,24 +184,91 @@ impl P2pService {
         Ok(swarm)
     }
 
-    fn handle_identify_received(&self, swarm: &mut Swarm<P2pNetworkBehaviour>, peer_id: PeerId, info: Info) -> Result<(), ServerError> {
-        let is_relay = info.protocols.iter().any(|protocol| *protocol == relay::HOP_PROTOCOL_NAME);
+    fn handle_identify_received(
+        &self,
+        swarm: &mut Swarm<P2pNetworkBehaviour>,
+        peer_id: PeerId,
+        info: Info,
+    ) -> Result<(), ServerError> {
+        let is_relay = info
+            .protocols
+            .iter()
+            .any(|protocol| *protocol == relay::HOP_PROTOCOL_NAME);
 
         for addr in info.listen_addrs {
-            swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+            swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(&peer_id, addr.clone());
             swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
 
             if is_relay {
-                let listen_addr = addr.clone().with_p2p(peer_id).unwrap().with(Protocol::P2pCircuit);
+                let listen_addr = addr
+                    .clone()
+                    .with_p2p(peer_id)
+                    .unwrap()
+                    .with(Protocol::P2pCircuit);
                 info!(target: LOG_TARGET, "Trying to listen on relay with address {}", listen_addr);
-                swarm.listen_on(listen_addr).map_err(|error| ServerError::P2pNetwork(P2pNetworkError::Libp2pTransport(error)))?;
+                if let Err(error) = swarm.listen_on(listen_addr.clone()) {
+                    warn!(target: LOG_TARGET, "Failed to listen on relay ({listen_addr}: {error})");
+                }
             }
         }
         Ok(())
-    } 
+    }
+
+    fn handle_mdns_discovery(
+        &self,
+        swarm: &mut Swarm<P2pNetworkBehaviour>,
+        new_peers: Vec<(PeerId, Multiaddr)>,
+    ) {
+        for (peer_id, addr) in new_peers {
+            info!(target: LOG_TARGET, "[mDNS] Discovered {peer_id} at {addr}");
+            swarm.add_peer_address(peer_id, addr.clone());
+            swarm
+                .behaviour_mut()
+                .kademlia
+                .add_address(&peer_id, addr.clone());
+            swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+        }
+    }
+
+    fn handle_file_download_message(
+        &self,
+        swarm: &mut Swarm<P2pNetworkBehaviour>,
+        peer_id: PeerId,
+        message: libp2p::request_response::Message<FileChunkRequest, FileChunkResponse>,
+    ) {
+        match message {
+            request_response::Message::Request {
+                request_id,
+                request,
+                channel,
+            } => {
+                info!(target: LOG_TARGET, "File download request: {request:?}");
+                // TODO: implement
+            }
+            request_response::Message::Response {
+                request_id,
+                response,
+            } => {
+                info!(target: LOG_TARGET, "File download response: {response:?}");
+                // TODO: implement
+            }
+        }
+    }
+
+    fn handle_gossipsub_message(
+        &self,
+        swarm: &mut Swarm<P2pNetworkBehaviour>,
+        message: libp2p::gossipsub::Message,
+    ) {
+        info!(target: LOG_TARGET, "[gossipsub] New message: {message:?}");
+        // TODO: implement
+    }
 
     fn log_debug<T: std::fmt::Debug>(&self, event: T) {
-        debug!(target: LOG_TARGET, "{:?}", event); 
+        debug!(target: LOG_TARGET, "{:?}", event);
     }
 }
 
@@ -227,26 +308,21 @@ impl Service for P2pService {
                             _ => self.log_debug(event),
                         },
                         P2pNetworkBehaviourEvent::Mdns(event) => match event {
-                            mdns::Event::Discovered(new_peers) => {
-                                for (peer_id, addr) in new_peers {
-                                    info!(target: LOG_TARGET, "[mDNS] Discovered {peer_id} at {addr}");
-
-                                }
-                            } ,
+                            mdns::Event::Discovered(new_peers) => self.handle_mdns_discovery(&mut swarm, new_peers),
                             _ => self.log_debug(event),
                         },
                         P2pNetworkBehaviourEvent::Kademlia(event) => self.log_debug(event),
                         P2pNetworkBehaviourEvent::Gossipsub(event) => match event {
-                            gossipsub::Event::Message { propagation_source, message_id, message } => todo!(),
-                            gossipsub::Event::Subscribed { peer_id, topic } => todo!(),
-                            gossipsub::Event::Unsubscribed { peer_id, topic } => todo!(),
-                            gossipsub::Event::GossipsubNotSupported { peer_id } => todo!(),
-                            gossipsub::Event::SlowPeer { peer_id, failed_messages } => todo!(),
+                            gossipsub::Event::Message { propagation_source: _propagation_source, message_id: _message_id, message } => self.handle_gossipsub_message(&mut swarm, message),
+                            _ => self.log_debug(event),
                         },
-                        P2pNetworkBehaviourEvent::RelayServer(_) => todo!(),
-                        P2pNetworkBehaviourEvent::RelayClient(_) => todo!(),
-                        P2pNetworkBehaviourEvent::Dcutr(_) => todo!(),
-                        P2pNetworkBehaviourEvent::FileDownload(_) => todo!(),
+                        P2pNetworkBehaviourEvent::RelayServer(event) => self.log_debug(event),
+                        P2pNetworkBehaviourEvent::RelayClient(event) => self.log_debug(event),
+                        P2pNetworkBehaviourEvent::Dcutr(event) => self.log_debug(event),
+                        P2pNetworkBehaviourEvent::FileDownload(event) => match event {
+                            request_response::Event::Message { peer, connection_id: _connection_id, message } => self.handle_file_download_message(&mut swarm, peer, message),
+                            _ => self.log_debug(event),
+                        },
                         _ => self.log_debug(event),
                     },
                     libp2p::swarm::SwarmEvent::NewListenAddr { listener_id: _listener_id, address } => {

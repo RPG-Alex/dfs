@@ -4,9 +4,8 @@ use async_trait::async_trait;
 use log::info;
 use thiserror::Error;
 use tokio::{
-    select,
     sync::Mutex,
-    task::{JoinError, JoinHandle, JoinSet},
+    task::{JoinError, JoinHandle},
 };
 use tokio_util::sync::CancellationToken;
 
