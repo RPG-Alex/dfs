@@ -1,12 +1,10 @@
 use std::{
-    hash::{DefaultHasher, Hash, Hasher},
-    path::PathBuf,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    fmt::Debug, hash::{DefaultHasher, Hash, Hasher}, path::PathBuf, time::{Duration, SystemTime, UNIX_EPOCH}
 };
 
 use async_trait::async_trait;
 use libp2p::{
-    dcutr, futures::StreamExt, gossipsub::{self, IdentTopic, SubscriptionError}, identify, identity::{DecodingError, Keypair}, kad::{self, store::MemoryStore}, mdns, multiaddr::{self, Protocol}, noise, ping, relay, request_response::{self, cbor}, swarm::NetworkBehaviour, tcp, yamux, StreamProtocol, Swarm, TransportError
+    dcutr, futures::StreamExt, gossipsub::{self, IdentTopic, SubscriptionError}, identify::{self, Info}, identity::{DecodingError, Keypair}, kad::{self, store::MemoryStore}, mdns, multiaddr::{self, Protocol}, noise, ping, relay, request_response::{self, cbor}, swarm::NetworkBehaviour, tcp, yamux, PeerId, StreamProtocol, Swarm, TransportError
 };
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
@@ -171,6 +169,26 @@ impl P2pService {
 
         Ok(swarm)
     }
+
+    fn handle_identify_received(&self, swarm: &mut Swarm<P2pNetworkBehaviour>, peer_id: PeerId, info: Info) -> Result<(), ServerError> {
+        let is_relay = info.protocols.iter().any(|protocol| *protocol == relay::HOP_PROTOCOL_NAME);
+
+        for addr in info.listen_addrs {
+            swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
+            swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+
+            if is_relay {
+                let listen_addr = addr.clone().with_p2p(peer_id).unwrap().with(Protocol::P2pCircuit);
+                info!(target: LOG_TARGET, "Trying to listen on relay with address {}", listen_addr);
+                swarm.listen_on(listen_addr).map_err(|error| ServerError::P2pNetwork(P2pNetworkError::Libp2pTransport(error)))?;
+            }
+        }
+        Ok(())
+    } 
+
+    fn log_debug<T: std::fmt::Debug>(&self, event: T) {
+        debug!(target: LOG_TARGET, "{:?}", event); 
+    }
 }
 
 #[async_trait]
@@ -205,39 +223,36 @@ impl Service for P2pService {
                 event = swarm.select_next_some() => match event {
                     libp2p::swarm::SwarmEvent::Behaviour(event) => match event {
                         P2pNetworkBehaviourEvent::Identify(event) => match event {
-                            identify::Event::Received { connection_id: _connection_id, peer_id, info } => {
-                                let is_relay = info.protocols.iter().any(|protocol| *protocol == relay::HOP_PROTOCOL_NAME);
-
-                                for addr in info.listen_addrs {
-                                    swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
-                                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-
-                                    if is_relay {
-                                        let listen_addr = addr.clone().with_p2p(peer_id).unwrap().with(Protocol::P2pCircuit);
-                                    }
-                                }
-                            },
-                            _ => {
-                                debug!(target: LOG_TARGET, "{:?}", event);  
-                            }
+                            identify::Event::Received { connection_id: _connection_id, peer_id, info } => self.handle_identify_received(&mut swarm, peer_id, info)?,
+                            _ => self.log_debug(event),
                         },
-                        P2pNetworkBehaviourEvent::Mdns(_) => todo!(),
-                        P2pNetworkBehaviourEvent::Kademlia(_) => todo!(),
-                        P2pNetworkBehaviourEvent::Gossipsub(_) => todo!(),
+                        P2pNetworkBehaviourEvent::Mdns(event) => match event {
+                            mdns::Event::Discovered(new_peers) => {
+                                for (peer_id, addr) in new_peers {
+                                    info!(target: LOG_TARGET, "[mDNS] Discovered {peer_id} at {addr}");
+
+                                }
+                            } ,
+                            _ => self.log_debug(event),
+                        },
+                        P2pNetworkBehaviourEvent::Kademlia(event) => self.log_debug(event),
+                        P2pNetworkBehaviourEvent::Gossipsub(event) => match event {
+                            gossipsub::Event::Message { propagation_source, message_id, message } => todo!(),
+                            gossipsub::Event::Subscribed { peer_id, topic } => todo!(),
+                            gossipsub::Event::Unsubscribed { peer_id, topic } => todo!(),
+                            gossipsub::Event::GossipsubNotSupported { peer_id } => todo!(),
+                            gossipsub::Event::SlowPeer { peer_id, failed_messages } => todo!(),
+                        },
                         P2pNetworkBehaviourEvent::RelayServer(_) => todo!(),
                         P2pNetworkBehaviourEvent::RelayClient(_) => todo!(),
                         P2pNetworkBehaviourEvent::Dcutr(_) => todo!(),
                         P2pNetworkBehaviourEvent::FileDownload(_) => todo!(),
-                        _ => {
-                            debug!(target: LOG_TARGET, "{:?}", event);
-                        }
+                        _ => self.log_debug(event),
                     },
                     libp2p::swarm::SwarmEvent::NewListenAddr { listener_id: _listener_id, address } => {
                         info!(target: LOG_TARGET, "LIstening on {}", address);
                     },
-                    _ => {
-                        debug!(target: LOG_TARGET, "{:?}", event);
-                    },
+                    _ => self.log_debug(event),
                 },
                 _ = cancel_token.cancelled() => {
                     info!(target: LOG_TARGET, "P2p networking service shutting down...");
