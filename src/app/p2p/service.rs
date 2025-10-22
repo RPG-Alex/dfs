@@ -320,7 +320,7 @@ impl Service for P2pService {
                         P2pNetworkBehaviourEvent::RelayClient(event) => self.log_debug(event),
                         P2pNetworkBehaviourEvent::Dcutr(event) => self.log_debug(event),
                         P2pNetworkBehaviourEvent::FileDownload(event) => match event {
-                            request_response::Event::Message { peer, connection_id: _connection_id, message } => self.handle_file_download_message(&mut swarm, peer, message),
+                            request_response::Event::Message { peer, message } => self.handle_file_download_message(&mut swarm, peer, message),
                             _ => self.log_debug(event),
                         },
                         _ => self.log_debug(event),
